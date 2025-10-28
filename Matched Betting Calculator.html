@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Matched Betting Calculator (Offline)</title>
+<style>
+  body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial; background:#f6f8fa; color:#0b1220; padding:24px; }
+  .card { max-width:820px; margin:0 auto; background:white; border-radius:12px; box-shadow:0 6px 18px rgba(8,15,30,0.08); padding:20px; }
+  h1 { margin:0 0 10px 0; font-size:20px; }
+  .row { display:flex; gap:12px; flex-wrap:wrap; margin-bottom:12px; }
+  label { font-size:13px; display:block; margin-bottom:6px; color:#394b59; }
+  input[type="number"], select { padding:8px 10px; border-radius:8px; border:1px solid #e1e6ea; font-size:15px; min-width:120px; }
+  .big { font-size:18px; font-weight:600; }
+  button { background:#0b69ff; color:white; border:none; padding:10px 14px; border-radius:10px; font-weight:600; cursor:pointer; }
+  .muted { color:#6b7785; font-size:13px; }
+  .results { display:grid; grid-template-columns:repeat(2,1fr); gap:12px; margin-top:14px; }
+  .result { background:#f8fafc; padding:12px; border-radius:8px; }
+  .small { font-size:13px; color:#4b5b69; }
+  footer { margin-top:12px; font-size:12px; color:#6b7785; text-align:center; }
+  @media (max-width:600px){ .results { grid-template-columns:1fr } .row { flex-direction:column; } }
+  #profitWin, #profitLose { color:#1a7f37; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>Matched Betting Calculator</h1>
+    <p class="muted">Calculate lay stake, liability and guaranteed profit for qualifying or free bets.</p>
+
+    <div class="row">
+      <div>
+        <label>Mode</label>
+        <select id="mode">
+          <option value="qualifying">Qualifying bet (stake returned)</option>
+          <option value="free">Free bet (stake not returned)</option>
+        </select>
+      </div>
+
+      <div>
+        <label>Back stake</label>
+        <input id="backStake" type="number" step="0.01" min="0" value="" />
+      </div>
+
+      <div>
+        <label>Back odds (decimal)</label>
+        <input id="backOdds" type="number" step="0.01" min="1" value="1.1" />
+      </div>
+
+      <div>
+        <label>Lay odds (decimal)</label>
+        <input id="layOdds" type="number" step="0.01" min="1" value="1.1" />
+      </div>
+
+      <div>
+        <label>Exchange commission (%)</label>
+        <input id="commission" type="number" step="0.01" min="0" value="0" />
+      </div>
+    </div>
+
+    <div style="display:flex; gap:10px; align-items:center; margin-top:6px;">
+      <button id="calculate">Calculate</button>
+      <button id="record" style="background:#198754;">Record Result</button>
+      <button id="clearLast" style="background:#d9534f;">Clear Last</button>
+<button id="exportCSV" style="background:#ff9900;">Export CSV</button>
+      <div class="muted" style="margin-left:auto;">Results update when you click Calculate.</div>
+    </div>
+
+    <div class="results" id="results">
+      <div class="result">
+        <div class="small">Calculated lay stake</div>
+        <div class="big" id="layStake">—</div>
+      </div>
+
+      <div class="result">
+        <div class="small">Liability (if selection wins)</div>
+        <div class="big" id="liability">—</div>
+      </div>
+
+      <div class="result">
+        <div class="small">Profit if back bet wins</div>
+        <div class="big" id="profitWin">—</div>
+      </div>
+
+      <div class="result">
+        <div class="small">Profit if back bet loses</div>
+        <div class="big" id="profitLose">—</div>
+      </div>
+    </div>
+
+    <h2 style="margin-top:20px; font-size:18px;">Profit & Loss Tracker</h2>
+    <table id="trackerTable" style="width:100%; border-collapse:collapse; margin-top:10px;">
+      <thead>
+        <tr style="background:#f1f3f5;">
+          <th style="padding:6px; border:1px solid #e0e0e0;">Mode</th>
+          <th style="padding:6px; border:1px solid #e0e0e0;">Back Stake</th>
+          <th style="padding:6px; border:1px solid #e0e0e0;">Back Odds</th>
+          <th style="padding:6px; border:1px solid #e0e0e0;">Lay Odds</th>
+          <th style="padding:6px; border:1px solid #e0e0e0;">Commission %</th>
+          <th style="padding:6px; border:1px solid #e0e0e0;">Profit (Win)</th>
+          <th style="padding:6px; border:1px solid #e0e0e0;">Profit (Lose)</th>
+        </tr>
+      </thead>
+      <tbody id="trackerBody"></tbody>
+    </table>
+    <div id="totalPL" style="margin-top:10px; font-weight:600;">Total P/L: £0.00</div>
+
+    <footer>Built by Ben Goodwin (just kidding it was ChatGPT)</footer>
+  </div>
+
+<script>
+function number(x){ return typeof x === 'number' && isFinite(x) ? x : 0; }
+
+function calc() {
+  const mode = document.getElementById('mode').value;
+  const backOdds = parseFloat(document.getElementById('backOdds').value) || 0;
+  const layOdds  = parseFloat(document.getElementById('layOdds').value) || 0;
+  const backStake= parseFloat(document.getElementById('backStake').value) || 0;
+  const commissionPct = parseFloat(document.getElementById('commission').value) || 0;
+  const comm = commissionPct / 100.0;
+
+  if (backOdds <= 1 || layOdds <= 1) { alert('Please enter valid decimal odds greater than 1.0'); return; }
+  if (layOdds - comm <= 0) { alert('Lay odds minus commission must be > 0.'); return; }
+
+  let layStake = 0;
+  if (mode === 'qualifying') {
+    layStake = (backStake * backOdds) / (layOdds - comm);
+  } else {
+    layStake = (backStake * (backOdds - 1)) / (layOdds - comm);
+  }
+
+  const liability = layStake * (layOdds - 1);
+  const profitWin  = (backStake * (backOdds - 1)) - liability;
+  const profitLose = (layStake * (1 - comm)) - (mode === 'qualifying' ? backStake : 0);
+
+  function fmt(n){ return (Math.round(n * 100) / 100).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2}); }
+  document.getElementById('layStake').textContent = fmt(layStake);
+  document.getElementById('liability').textContent = fmt(liability);
+
+  const profitWinEl = document.getElementById('profitWin');
+  const profitLoseEl = document.getElementById('profitLose');
+
+  profitWinEl.textContent = fmt(profitWin);
+  profitLoseEl.textContent = fmt(profitLose);
+
+  profitWinEl.style.color = profitWin < 0 ? "#d32f2f" : "#1a7f37";
+  profitLoseEl.style.color = profitLose < 0 ? "#d32f2f" : "#1a7f37";
+}
+
+// Profit & loss tracker with localStorage persistence
+let tracker = JSON.parse(localStorage.getItem('trackerData') || '[]');
+
+function renderTracker() {
+  const tbody = document.getElementById('trackerBody');
+  tbody.innerHTML = '';
+  tracker.forEach(item => {
+    const row = document.createElement('tr');
+    row.innerHTML = `
+      <td style="padding:6px; border:1px solid #e0e0e0;">${item.mode}</td>
+      <td style="padding:6px; border:1px solid #e0e0e0;">£${item.backStake.toFixed(2)}</td>
+      <td style="padding:6px; border:1px solid #e0e0e0;">${item.backOdds.toFixed(2)}</td>
+      <td style="padding:6px; border:1px solid #e0e0e0;">${item.layOdds.toFixed(2)}</td>
+      <td style="padding:6px; border:1px solid #e0e0e0;">${item.commission.toFixed(2)}</td>
+      <td style="padding:6px; border:1px solid #e0e0e0; color:${item.profitWin < 0 ? '#d32f2f':'#1a7f37'};">£${item.profitWin.toFixed(2)}</td>
+      <td style="padding:6px; border:1px solid #e0e0e0; color:${item.profitLose < 0 ? '#d32f2f':'#1a7f37'};">£${item.profitLose.toFixed(2)}</td>
+    `;
+    tbody.appendChild(row);
+  });
+  const total = tracker.reduce((sum, x) => sum + x.avgProfit, 0);
+  const totalPL = document.getElementById('totalPL');
+  totalPL.textContent = `Total P/L: £${total.toFixed(2)}`;
+  totalPL.style.color = total < 0 ? "#d32f2f" : "#1a7f37";
+}
+
+function recordResult() {
+  const mode = document.getElementById('mode').value;
+  const backStake = parseFloat(document.getElementById('backStake').value) || 0;
+  const backOdds = parseFloat(document.getElementById('backOdds').value) || 0;
+  const layOdds = parseFloat(document.getElementById('layOdds').value) || 0;
+  const commission = parseFloat(document.getElementById('commission').value) || 0;
+
+  const profitWin = parseFloat(document.getElementById('profitWin').textContent.replace(/,/g,'')) || 0;
+  const profitLose = parseFloat(document.getElementById('profitLose').textContent.replace(/,/g,'')) || 0;
+
+  const avgProfit = (profitWin + profitLose) / 2;
+  const entry = { mode, backStake, backOdds, layOdds, commission, profitWin, profitLose, avgProfit };
+  tracker.push(entry);
+  localStorage.setItem('trackerData', JSON.stringify(tracker));
+  renderTracker();
+}
+
+function clearLast() {
+  tracker.pop();
+  localStorage.setItem('trackerData', JSON.stringify(tracker));
+  renderTracker();
+}
+
+document.getElementById('calculate').addEventListener('click', calc);
+document.getElementById('record').addEventListener('click', recordResult);
+document.getElementById('clearLast').addEventListener('click', clearLast);
+
+// initial load
+calc();
+renderTracker();
+
+
+function exportToCSV() {
+  if (tracker.length === 0) {
+    alert("No data to export!");
+    return;
+  }
+
+  const headers = [
+    "Mode",
+    "Back Stake",
+    "Back Odds",
+    "Lay Odds",
+    "Commission %",
+    "Profit (Win)",
+    "Profit (Lose)",
+    "Average Profit"
+  ];
+
+  const rows = tracker.map(item => [
+    item.mode,
+    item.backStake.toFixed(2),
+    item.backOdds.toFixed(2),
+    item.layOdds.toFixed(2),
+    item.commission.toFixed(2),
+    item.profitWin.toFixed(2),
+    item.profitLose.toFixed(2),
+    item.avgProfit.toFixed(2)
+  ]);
+
+  const csvContent =
+    "data:text/csv;charset=utf-8," +
+    [headers, ...rows].map(e => e.join(",")).join("\n");
+
+  const encodedUri = encodeURI(csvContent);
+  const link = document.createElement("a");
+  link.setAttribute("href", encodedUri);
+  link.setAttribute("download", "profit_loss_tracker.csv");
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+}
+
+document.getElementById("exportCSV").addEventListener("click", exportToCSV);
+
+</script>
+</body>
+</html>
